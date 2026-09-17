@@ -1,0 +1,45 @@
+A system that uses an LLM to discover how to complete a task in a web app once, records that flow as a reusable artifact, and replays it deterministically afterward without the LLM reporting success, a known outcome or failure.
+
+Target URL: https://www.saucedemo.com/
+Login: standard_user (username) / secret_sauce (password)
+Discovery goal (natural language): "Login, add [PRODUCT_NAME] to cart, go to checkout, fill the req info, and place the order."
+
+Tech stack:
+Language: Python
+Browser automation: Playwright
+LLM provider: Gemini 
+Model: gemini-3.5-flash-lite
+Storage: flat JSON files
+Architecture: single process, CLI-driven
+
+Components:
+1. Agent loop: observes the webpages via Playwright locators, assess the goal and decides action (LLM call gets to know available actions based on the goal) and acts based on the decision (click, type). This is repeated till goal is met or any other stopping condition hits. Log every step.
+2. Artifact schema + log: after a successful run, record everything into JSON artifact.
+3. Replay engine: given an artifact + input params, executes steps with Playwright directly instead of making LLM call.
+4. Guardrails: allowlist of permitted domains/routes and action types; risk classification (safe vs. risky/irreversible); redaction of secrets/PII before anything is written to logs or artifacts.
+5. Escalation & handoff: on a hard failure or a blocked risky action, pause automation, write an intervention_request.json (goal, step, screenshot, reason), leave the browser open (non-headless) for a human to act on the same session, then resume via a CLI command once the human signals completion.
+6. Evidence/logging: structured JSON step log for every run; screenshot captured on any failure or business-outcome event.
+
+Repo structure:
+/README.md
+/REPORT.md
+/evidence/
+  discovery_run_1.log
+  replay_run_1.log
+  replay_run_2_error.log
+  artifact_check_balance_v1.json
+/src
+  /agent        — discovery loop (LLM observe/decide/act)
+  /replay       — deterministic executor
+  /artifact     — schema + save/load
+  /guardrails   — allowlist + risk classification
+  /escalation   — pause/handoff mechanism
+  /target-app   — your mock banking app (if self-built)
+  /cli.ts       — entrypoints: `run-agent`, `replay`
+
+Non-goals / explicit cuts
+1. No multi-tenant implementation
+2. No desktop app support
+3. No real-time co-browsing operator console
+4. No queues, services, or scaling infrastructure
+5. No stretch goals
