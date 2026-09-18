@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from playwright.sync_api import Page, Locator, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page, Locator, Error as PlaywrightError
 
 from .actions import Action
 
@@ -25,11 +25,41 @@ ALLOWED_DOMAINS = {"saucedemo.com"}
 
 
 class ActionExecutionError(Exception):
-    """Raised when an action cannot be executed (locator not found, etc.)."""
+    """Raised when an action cannot be executed (locator not found, etc.).
+
+    Treated as recoverable by the agent loop: logged with a screenshot, fed
+    back into LLM history, and the run continues so the LLM can retry a
+    different approach.
+    """
 
 
 class GuardrailViolation(ActionExecutionError):
     """Raised when an action is blocked by a guardrail (e.g. disallowed domain)."""
+
+
+class FatalPlaywrightError(ActionExecutionError):
+    """Raised when the browser session itself is unusable (page/context/
+    browser closed, or the browser process crashed) - no further action can
+    possibly succeed, so the agent loop should stop immediately instead of
+    logging-and-continuing.
+    """
+
+
+# Substrings Playwright uses in its own error messages for session-fatal
+# conditions. Matched case-insensitively rather than importing Playwright's
+# internal (non-public) exception classes, since those aren't part of its
+# stable public API across versions.
+_FATAL_ERROR_MARKERS = (
+    "has been closed",
+    "target closed",
+    "browser has crashed",
+    "page crashed",
+)
+
+
+def _is_fatal(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _FATAL_ERROR_MARKERS)
 
 
 def _check_domain_allowed(url: str) -> None:
@@ -82,5 +112,8 @@ def execute(page: Page, action: Action) -> str:
 
         raise ActionExecutionError(f"Unhandled action: {action.name}")
 
-    except PlaywrightTimeoutError as exc:
-        raise ActionExecutionError(f"Timed out executing {action.name}: {exc}") from exc
+    except PlaywrightError as exc:
+        message = f"Playwright error executing {action.name}({action.redacted_args()}): {exc}"
+        if _is_fatal(exc):
+            raise FatalPlaywrightError(message) from exc
+        raise ActionExecutionError(message) from exc

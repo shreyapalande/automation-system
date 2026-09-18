@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 evidence/*.log
+evidence/*.png
+.pytest_cache/
